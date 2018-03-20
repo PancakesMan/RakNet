@@ -1,3 +1,8 @@
+#include <glm/glm.hpp>
+#include <glm/ext.hpp>
+#include <iostream>
+#include <thread>
+
 #include "Client.h"
 #include "Gizmos.h"
 #include "Input.h"
@@ -5,14 +10,11 @@
 #include "Font.h"
 #include "Texture.h"
 
-#include <glm/glm.hpp>
-#include <glm/ext.hpp>
-#include <iostream>
-#include <thread>
-
 enum GameMessages { 
 	ID_SERVER_TEXT_MESSAGE = ID_USER_PACKET_ENUM + 1,
-	ID_USER_TEXT_MESSAGE, ID_SET_NAME_MESSAGE
+	ID_USER_TEXT_MESSAGE, ID_SET_NAME_MESSAGE,
+	ID_CLIENT_CLIENT_DATA, ID_CLIENT_ID_MESSAGE,
+	ID_NEW_PLAYER_MESSAGE
 };
 
 using glm::vec3;
@@ -35,6 +37,11 @@ bool Client::startup() {
 	m_2dRenderer = new aie::Renderer2D();
 
 	message = "";
+	chatText = new char[50];
+
+	player = new GameObject();
+	player->position = glm::vec2(getWindowWidth() / 2, getWindowHeight() / 2);
+	player->colour = glm::vec4(0, 1, 0, 1);
 
 	//// initialise gizmo primitive counts
 	//Gizmos::create(10000, 10000, 10000, 10000);
@@ -53,6 +60,9 @@ bool Client::startup() {
 void Client::shutdown() {
 
 	Gizmos::destroy();
+	RakNet::BitStream bs;
+	bs.Write((RakNet::MessageID)21);
+	m_pPeerInterface->Send(&bs, HIGH_PRIORITY, RELIABLE_ORDERED, 0, RakNet::UNASSIGNED_SYSTEM_ADDRESS, true);
 }
 
 void Client::update(float deltaTime) {
@@ -75,6 +85,26 @@ void Client::update(float deltaTime) {
 	{
 		timeout = 0.0f;
 		message = message.substr(0, message.length() - 1);
+	}
+
+	if (input->isKeyDown(aie::INPUT_KEY_LEFT)) {
+		player->position.x -= 100.0f * deltaTime;
+		sendClientGameObject();
+	}
+
+	if (input->isKeyDown(aie::INPUT_KEY_RIGHT)) {
+		player->position.x += 100.0f * deltaTime;
+		sendClientGameObject();
+	}
+
+	if (input->isKeyDown(aie::INPUT_KEY_UP)) {
+		player->position.y += 100.0f * deltaTime;
+		sendClientGameObject();
+	}
+
+	if (input->isKeyDown(aie::INPUT_KEY_DOWN)) {
+		player->position.y -= 100.0f * deltaTime;
+		sendClientGameObject();
 	}
 
 	// Place pressed characters (as lowercase) into command
@@ -123,6 +153,25 @@ void Client::draw() {
 	m_2dRenderer->drawText(m_font, message.c_str(), 0, 10);
 	m_2dRenderer->drawText(m_font, std::string("_").c_str(), m_font->getStringWidth(message.c_str()), 10);
 
+	m_2dRenderer->setRenderColour(
+		player->colour.x,
+		player->colour.y,
+		player->colour.z,
+		player->colour.w
+	);
+	m_2dRenderer->drawCircle(player->position.x, player->position.y, 20);
+
+	for (auto it = players.begin(); it != players.end(); it++)
+	{
+		m_2dRenderer->setRenderColour(
+			it->second.colour.x,
+			it->second.colour.y,
+			it->second.colour.z,
+			it->second.colour.w
+		);
+		m_2dRenderer->drawCircle(it->second.position.x, it->second.position.y, 20);
+	}
+
 	m_2dRenderer->end();
 }
 
@@ -149,6 +198,8 @@ void Client::initializeClientConnection()
 	// Finally, chec to see if we connected, and if not, throw an error
 	if (res != RakNet::CONNECTION_ATTEMPT_STARTED)
 		std::cout << "Unable to start connection, Error number: " << res << std::endl;
+	else
+		sendClientGameObject();
 }
 
 void Client::handleNetworkMessages()
@@ -162,13 +213,24 @@ void Client::handleNetworkMessages()
 		switch (packet->data[0])
 		{
 		case ID_REMOTE_DISCONNECTION_NOTIFICATION: 
-			std::cout << "Another client has disconnected.\n"; 
-			break; 
+		{
+			std::cout << "Another client has disconnected.\n";
+			RakNet::BitStream bsIn(packet->data, packet->length, false);
+			bsIn.IgnoreBytes(sizeof(RakNet::MessageID));
+			RakNet::SystemAddress addr;
+			bsIn.Read(addr);
+
+			auto it = players.find(addr);
+			players.erase(it);
+
+			break;
+		}
 		case ID_REMOTE_CONNECTION_LOST: 
 			std::cout << "Another client has lost the connection.\n"; 
 			break; 
 		case ID_REMOTE_NEW_INCOMING_CONNECTION: 
 			std::cout << "Another client has connected.\n"; 
+			sendClientGameObject();
 			break; 
 		case ID_CONNECTION_REQUEST_ACCEPTED: 
 			std::cout << "Our connection request has been accepted.\n"; 
@@ -195,9 +257,44 @@ void Client::handleNetworkMessages()
 			std::cout << name.C_String() << " said: " << message.C_String() << std::endl;
 			break;
 		}
+		case ID_CLIENT_CLIENT_DATA:
+		{
+			RakNet::BitStream bsIn(packet->data, packet->length, false);
+			bsIn.IgnoreBytes(sizeof(RakNet::MessageID));
+
+			RakNet::SystemAddress player;
+			bsIn.Read(player);
+
+			if (player != me)
+			{
+				GameObject data;
+				bsIn.Read((char*)&data, sizeof(GameObject));
+
+				players[player] = data;
+				//std::cout << "Client " << player.ToString() << " at position: " << data.position.x << "," << data.position.y << std::endl;
+			}
+			break;
+		}
+		case ID_CLIENT_ID_MESSAGE:
+		{
+			RakNet::BitStream bsIn(packet->data, packet->length, false);
+			bsIn.IgnoreBytes(sizeof(RakNet::MessageID));
+
+			bsIn.Read(me);
+			break;
+		}
 		default: 
 			std::cout << "Received a message with a unknown id: " << packet->data[0]; 
 			break;
 		}
 	}
+}
+
+void Client::sendClientGameObject()
+{
+	RakNet::BitStream bs;
+	bs.Write((RakNet::MessageID)GameMessages::ID_CLIENT_CLIENT_DATA);
+	bs.Write((char*)player, sizeof(GameObject));
+
+	m_pPeerInterface->Send(&bs, HIGH_PRIORITY, RELIABLE_ORDERED, 0, RakNet::UNASSIGNED_SYSTEM_ADDRESS, true);
 }

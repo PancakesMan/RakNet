@@ -1,9 +1,11 @@
 #pragma once
 
 #include <string>
+#include <map>
 
 #include "Application.h"
 #include "Renderer2D.h"
+#include "GameObject.h"
 
 #include <glm/mat4x4.hpp>
 
@@ -30,6 +32,9 @@ public:
 	// Handle incoming packets
 	void handleNetworkMessages();
 
+	// Send GameObject data to server
+	void sendClientGameObject();
+
 protected:
 
 	glm::mat4	m_viewMatrix;
@@ -44,7 +49,14 @@ protected:
 	const unsigned short PORT = 5456;
 
 	std::string message;
+	std::map<RakNet::SystemAddress, GameObject> players;
 
 	const float cd = 0.12f;
 	float timeout = 0.0f;
+
+	char* chatText;
+
+	GameObject* player;
+
+	RakNet::SystemAddress me;
 };

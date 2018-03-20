@@ -3,7 +3,7 @@
 int main() {
 	
 	auto app = new Client();
-	app->run("AIE", 1280, 720, false);
+	app->run("AIE", 800, 600, false);
 	delete app;
 
 	return 0;
