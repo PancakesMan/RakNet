@@ -82,6 +82,12 @@ void handleNetworkMessages(RakNet::RakPeerInterface* pPeerInterface)
 				std::cout << "The client at " << packet->systemAddress.ToString() << " has lost the connection.\n";
 				auto it = usernames.find(packet->systemAddress);
 				usernames.erase(it);
+
+				RakNet::BitStream bs;
+				bs.Write((RakNet::MessageID)31);
+				bs.Write(packet->systemAddress);
+				pPeerInterface->Send(&bs, HIGH_PRIORITY, RELIABLE_ORDERED, 0, RakNet::UNASSIGNED_SYSTEM_ADDRESS, true);
+
 				break;
 			}
 			case ID_USER_TEXT_MESSAGE:
